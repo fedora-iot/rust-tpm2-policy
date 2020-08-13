@@ -15,10 +15,12 @@
 use std::convert::{TryFrom, TryInto};
 use std::io::Write;
 
-use tss_esapi::utils::TpmaSessionBuilder;
+use tss_esapi::constants::algorithm::HashingAlgorithm;
+use tss_esapi::constants::tss as tss_constants;
+use tss_esapi::structures::{Digest, MaxBuffer, Nonce, PcrSelectionListBuilder, PcrSlot};
 use tss_esapi::tss2_esys::{ESYS_TR, ESYS_TR_NONE, ESYS_TR_RH_OWNER};
-use tss_esapi::utils::algorithm_specifiers::HashingAlgorithm;
 use tss_esapi::utils::AsymSchemeUnion;
+use tss_esapi::utils::TpmaSessionBuilder;
 
 use serde::{Deserialize, Serialize};
 
@@ -76,11 +78,7 @@ pub type SignedPolicyList = Vec<SignedPolicy>;
 #[derive(Debug)]
 pub enum TPMPolicyStep {
     NoStep,
-    PCRs(
-        HashingAlgorithm,
-        Vec<u64>,
-        Box<TPMPolicyStep>,
-    ),
+    PCRs(HashingAlgorithm, Vec<u64>, Box<TPMPolicyStep>),
     Authorized {
         signkey: PublicKey,
         policy_ref: Vec<u8>,
@@ -99,12 +97,8 @@ pub enum RSAPublicKeyScheme {
 impl RSAPublicKeyScheme {
     fn to_scheme(&self, hash_algo: &HashAlgo) -> AsymSchemeUnion {
         match self {
-            RSAPublicKeyScheme::RSAPSS => {
-                AsymSchemeUnion::RSAPSS(hash_algo.into())
-            }
-            RSAPublicKeyScheme::RSASSA => {
-                AsymSchemeUnion::RSASSA(hash_algo.into())
-            }
+            RSAPublicKeyScheme::RSAPSS => AsymSchemeUnion::RSAPSS(hash_algo.into()),
+            RSAPublicKeyScheme::RSASSA => AsymSchemeUnion::RSASSA(hash_algo.into()),
         }
     }
 }
@@ -123,7 +117,7 @@ pub enum HashAlgo {
 
 impl HashAlgo {
     fn to_tpmi_alg_hash(&self) -> tss_esapi::tss2_esys::TPMI_ALG_HASH {
-        let alg: tss_esapi::utils::algorithm_specifiers::HashingAlgorithm = self.into();
+        let alg: HashingAlgorithm = self.into();
         alg.into()
     }
 }
@@ -136,15 +130,9 @@ impl From<&HashAlgo> for HashingAlgorithm {
             HashAlgo::SHA384 => HashingAlgorithm::Sha384,
             HashAlgo::SHA512 => HashingAlgorithm::Sha512,
             HashAlgo::SM3_256 => HashingAlgorithm::Sm3_256,
-            HashAlgo::SHA3_256 => {
-                HashingAlgorithm::Sha3_256
-            }
-            HashAlgo::SHA3_384 => {
-                HashingAlgorithm::Sha3_384
-            }
-            HashAlgo::SHA3_512 => {
-                HashingAlgorithm::Sha3_512
-            }
+            HashAlgo::SHA3_256 => HashingAlgorithm::Sha3_256,
+            HashAlgo::SHA3_384 => HashingAlgorithm::Sha3_384,
+            HashAlgo::SHA3_512 => HashingAlgorithm::Sha3_512,
         }
     }
 }
@@ -205,7 +193,7 @@ impl TryFrom<&PublicKey> for tss_esapi::tss2_esys::TPM2B_PUBLIC {
                 });
 
                 Ok(tss_esapi::utils::Tpm2BPublicBuilder::new()
-                    .with_type(tss_esapi::constants::TPM2_ALG_RSA)
+                    .with_type(tss_constants::TPM2_ALG_RSA)
                     .with_name_alg(hashing_algo.to_tpmi_alg_hash())
                     .with_parms(tss_esapi::utils::PublicParmsUnion::RsaDetail(
                         tss_esapi::utils::TpmsRsaParmsBuilder::new_unrestricted_signing_key(
@@ -225,9 +213,11 @@ impl TryFrom<&PublicKey> for tss_esapi::tss2_esys::TPM2B_PUBLIC {
 
 fn tpm_sym_def(_ctx: &mut tss_esapi::Context) -> tss_esapi::tss2_esys::TPMT_SYM_DEF {
     tss_esapi::tss2_esys::TPMT_SYM_DEF {
-        algorithm: tss_esapi::constants::TPM2_ALG_AES,
+        algorithm: tss_constants::TPM2_ALG_AES,
         keyBits: tss_esapi::tss2_esys::TPMU_SYM_KEY_BITS { aes: 128 },
-        mode: tss_esapi::tss2_esys::TPMU_SYM_MODE { aes: tss_esapi::constants::TPM2_ALG_CFB },
+        mode: tss_esapi::tss2_esys::TPMU_SYM_MODE {
+            aes: tss_constants::TPM2_ALG_CFB,
+        },
     }
 }
 
@@ -240,14 +230,14 @@ fn create_and_set_tpm2_session(
     let session = ctx.start_auth_session(
         ESYS_TR_NONE,
         ESYS_TR_NONE,
-        &[],
+        None,
         session_type,
         symdef,
-        tss_esapi::constants::TPM2_ALG_SHA256,
+        tss_constants::TPM2_ALG_SHA256,
     )?;
     let session_attr = TpmaSessionBuilder::new()
-        .with_flag(tss_esapi::constants::TPMA_SESSION_DECRYPT)
-        .with_flag(tss_esapi::constants::TPMA_SESSION_ENCRYPT)
+        .with_flag(tss_constants::TPMA_SESSION_DECRYPT)
+        .with_flag(tss_constants::TPMA_SESSION_ENCRYPT)
         .build();
 
     ctx.tr_sess_set_attributes(session, session_attr)?;
@@ -257,32 +247,32 @@ fn create_and_set_tpm2_session(
     Ok(session)
 }
 
-fn pcr_id_to_slot(pcr: &u64) -> Result<tss_esapi::utils::PcrSlot, Error> {
+fn pcr_id_to_slot(pcr: &u64) -> Result<PcrSlot, Error> {
     match pcr {
-        0 => Ok(tss_esapi::utils::PcrSlot::Slot0),
-        1 => Ok(tss_esapi::utils::PcrSlot::Slot1),
-        2 => Ok(tss_esapi::utils::PcrSlot::Slot2),
-        3 => Ok(tss_esapi::utils::PcrSlot::Slot3),
-        4 => Ok(tss_esapi::utils::PcrSlot::Slot4),
-        5 => Ok(tss_esapi::utils::PcrSlot::Slot5),
-        6 => Ok(tss_esapi::utils::PcrSlot::Slot6),
-        7 => Ok(tss_esapi::utils::PcrSlot::Slot7),
-        8 => Ok(tss_esapi::utils::PcrSlot::Slot8),
-        9 => Ok(tss_esapi::utils::PcrSlot::Slot9),
-        10 => Ok(tss_esapi::utils::PcrSlot::Slot10),
-        11 => Ok(tss_esapi::utils::PcrSlot::Slot11),
-        12 => Ok(tss_esapi::utils::PcrSlot::Slot12),
-        13 => Ok(tss_esapi::utils::PcrSlot::Slot13),
-        14 => Ok(tss_esapi::utils::PcrSlot::Slot14),
-        15 => Ok(tss_esapi::utils::PcrSlot::Slot15),
-        16 => Ok(tss_esapi::utils::PcrSlot::Slot16),
-        17 => Ok(tss_esapi::utils::PcrSlot::Slot17),
-        18 => Ok(tss_esapi::utils::PcrSlot::Slot18),
-        19 => Ok(tss_esapi::utils::PcrSlot::Slot19),
-        20 => Ok(tss_esapi::utils::PcrSlot::Slot20),
-        21 => Ok(tss_esapi::utils::PcrSlot::Slot21),
-        22 => Ok(tss_esapi::utils::PcrSlot::Slot22),
-        23 => Ok(tss_esapi::utils::PcrSlot::Slot23),
+        0 => Ok(PcrSlot::Slot0),
+        1 => Ok(PcrSlot::Slot1),
+        2 => Ok(PcrSlot::Slot2),
+        3 => Ok(PcrSlot::Slot3),
+        4 => Ok(PcrSlot::Slot4),
+        5 => Ok(PcrSlot::Slot5),
+        6 => Ok(PcrSlot::Slot6),
+        7 => Ok(PcrSlot::Slot7),
+        8 => Ok(PcrSlot::Slot8),
+        9 => Ok(PcrSlot::Slot9),
+        10 => Ok(PcrSlot::Slot10),
+        11 => Ok(PcrSlot::Slot11),
+        12 => Ok(PcrSlot::Slot12),
+        13 => Ok(PcrSlot::Slot13),
+        14 => Ok(PcrSlot::Slot14),
+        15 => Ok(PcrSlot::Slot15),
+        16 => Ok(PcrSlot::Slot16),
+        17 => Ok(PcrSlot::Slot17),
+        18 => Ok(PcrSlot::Slot18),
+        19 => Ok(PcrSlot::Slot19),
+        20 => Ok(PcrSlot::Slot20),
+        21 => Ok(PcrSlot::Slot21),
+        22 => Ok(PcrSlot::Slot22),
+        23 => Ok(PcrSlot::Slot23),
         _ => Err(Error::InvalidValue),
     }
 }
@@ -294,11 +284,11 @@ impl TPMPolicyStep {
         self,
         ctx: &mut tss_esapi::Context,
         trial_policy: bool,
-    ) -> Result<Option<tss_esapi::utils::Digest>, Error> {
+    ) -> Result<Option<Digest>, Error> {
         let pol_type = if trial_policy {
-            tss_esapi::constants::TPM2_SE_TRIAL
+            tss_constants::TPM2_SE_TRIAL
         } else {
-            tss_esapi::constants::TPM2_SE_POLICY
+            tss_constants::TPM2_SE_POLICY
         };
 
         let symdef = tpm_sym_def(ctx);
@@ -306,20 +296,20 @@ impl TPMPolicyStep {
         let session = ctx.start_auth_session(
             ESYS_TR_NONE,
             ESYS_TR_NONE,
-            &[],
+            None,
             pol_type,
             symdef,
-            tss_esapi::constants::TPM2_ALG_SHA256,
+            tss_constants::TPM2_ALG_SHA256,
         )?;
         let session_attr = TpmaSessionBuilder::new()
-            .with_flag(tss_esapi::constants::TPMA_SESSION_DECRYPT)
-            .with_flag(tss_esapi::constants::TPMA_SESSION_ENCRYPT)
+            .with_flag(tss_constants::TPMA_SESSION_DECRYPT)
+            .with_flag(tss_constants::TPMA_SESSION_ENCRYPT)
             .build();
         ctx.tr_sess_set_attributes(session, session_attr)?;
 
         match self {
             TPMPolicyStep::NoStep => {
-                create_and_set_tpm2_session(ctx, tss_esapi::constants::TPM2_SE_HMAC)?;
+                create_and_set_tpm2_session(ctx, tss_constants::TPM2_SE_HMAC)?;
                 Ok(None)
             }
             _ => {
@@ -328,7 +318,7 @@ impl TPMPolicyStep {
                 let pol_digest = ctx.policy_get_digest(session)?;
 
                 if trial_policy {
-                    create_and_set_tpm2_session(ctx, tss_esapi::constants::TPM2_SE_HMAC)?;
+                    create_and_set_tpm2_session(ctx, tss_constants::TPM2_SE_HMAC)?;
                 } else {
                     ctx.set_sessions((session, ESYS_TR_NONE, ESYS_TR_NONE));
                 }
@@ -346,18 +336,18 @@ impl TPMPolicyStep {
             TPMPolicyStep::NoStep => Ok(()),
 
             TPMPolicyStep::PCRs(pcr_hash_alg, pcr_ids, next) => {
-                let pcr_ids: Result<Vec<tss_esapi::utils::PcrSlot>, Error> =
+                let pcr_ids: Result<Vec<PcrSlot>, Error> =
                     pcr_ids.iter().map(|x| pcr_id_to_slot(x)).collect();
-                let pcr_ids: Vec<tss_esapi::utils::PcrSlot> = pcr_ids?;
+                let pcr_ids: Vec<PcrSlot> = pcr_ids?;
 
-                let pcr_sel = tss_esapi::utils::PcrSelectionsBuilder::new()
+                let pcr_sel = PcrSelectionListBuilder::new()
                     .with_selection(pcr_hash_alg, &pcr_ids)
                     .build();
 
                 // Ensure PCR reading occurs with no sessions (we don't use audit sessions)
                 let old_ses = ctx.sessions();
                 ctx.set_sessions((ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE));
-                let (_update_counter, pcr_sel, pcr_data) = ctx.pcr_read(pcr_sel)?;
+                let (_update_counter, pcr_sel, pcr_data) = ctx.pcr_read(&pcr_sel)?;
                 ctx.set_sessions(old_ses);
 
                 let concatenated_pcr_values: Vec<&[u8]> = pcr_ids
@@ -372,10 +362,11 @@ impl TPMPolicyStep {
                     })
                     .collect();
                 let concatenated_pcr_values = concatenated_pcr_values.as_slice().concat();
+                let concatenated_pcr_values = MaxBuffer::try_from(concatenated_pcr_values)?;
 
                 let (hashed_data, _ticket) = ctx.hash(
                     &concatenated_pcr_values,
-                    tss_esapi::utils::algorithm_specifiers::HashingAlgorithm::Sha256,
+                    HashingAlgorithm::Sha256,
                     tss_esapi::utils::Hierarchy::Owner,
                 )?;
 
@@ -389,7 +380,7 @@ impl TPMPolicyStep {
                 policies,
                 next,
             } => {
-                let policy_ref = tss_esapi::utils::Digest::try_from(policy_ref)?;
+                let policy_ref = Nonce::try_from(policy_ref)?;
 
                 let tpm_signkey = tss_esapi::tss2_esys::TPM2B_PUBLIC::try_from(&signkey)?;
                 let loaded_key =
@@ -409,7 +400,7 @@ impl TPMPolicyStep {
                         };
                         */
                         let dummy_ticket = get_dummy_ticket(ctx);
-                        (tss_esapi::utils::Digest::try_from(vec![])?, dummy_ticket)
+                        (Digest::try_from(vec![])?, dummy_ticket)
                     }
                     Some(policies) => find_and_play_applicable_policy(
                         ctx,
@@ -423,9 +414,9 @@ impl TPMPolicyStep {
 
                 ctx.policy_authorize(
                     policy_session,
-                    approved_policy,
-                    tss_esapi::tss2_esys::TPM2B_DIGEST::try_from(policy_ref)?,
-                    loaded_key_name,
+                    &approved_policy,
+                    &policy_ref,
+                    &loaded_key_name,
                     check_ticket,
                 )?;
 
@@ -444,13 +435,7 @@ fn find_and_play_applicable_policy(
     policy_ref: &[u8],
     scheme: AsymSchemeUnion,
     loaded_key: ESYS_TR,
-) -> Result<
-    (
-        tss_esapi::utils::Digest,
-        tss_esapi::tss2_esys::TPMT_TK_VERIFIED,
-    ),
-    Error,
-> {
+) -> Result<(Digest, tss_esapi::tss2_esys::TPMT_TK_VERIFIED), Error> {
     for policy in policies {
         if policy.policy_ref != policy_ref {
             continue;
@@ -462,10 +447,12 @@ fn find_and_play_applicable_policy(
             ahash.write_all(&policy_digest)?;
             ahash.write_all(&policy_ref)?;
 
+            let ahash = MaxBuffer::try_from(ahash)?;
+
             let ahash = ctx
                 .hash(
                     &ahash,
-                    tss_esapi::utils::algorithm_specifiers::HashingAlgorithm::Sha256,
+                    HashingAlgorithm::Sha256,
                     tss_esapi::utils::Hierarchy::Null,
                 )?
                 .0;
@@ -484,7 +471,10 @@ fn find_and_play_applicable_policy(
 
 // This function would do a simple check whether the policy has a chance for success.
 // It does explicitly not change policy_session
-fn check_policy_feasibility(_ctx: &mut tss_esapi::Context, _policy: &SignedPolicy) -> Result<bool, Error> {
+fn check_policy_feasibility(
+    _ctx: &mut tss_esapi::Context,
+    _policy: &SignedPolicy,
+) -> Result<bool, Error> {
     Ok(true)
     // TODO: Implement this, to check whether the PCRs in this branch would match
 }
@@ -493,9 +483,9 @@ fn play_policy(
     ctx: &mut tss_esapi::Context,
     policy: &SignedPolicy,
     policy_session: ESYS_TR,
-) -> Result<Option<tss_esapi::utils::Digest>, Error> {
+) -> Result<Option<Digest>, Error> {
     if !check_policy_feasibility(ctx, policy)? {
-        return Ok(None)
+        return Ok(None);
     }
 
     for step in &policy.steps {
@@ -511,36 +501,34 @@ fn play_policy(
 fn get_dummy_ticket(context: &mut tss_esapi::Context) -> tss_esapi::tss2_esys::TPMT_TK_VERIFIED {
     let old_ses = context.sessions();
     context.set_sessions((ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE));
-    create_and_set_tpm2_session(context, tss_esapi::constants::TPM2_SE_HMAC).unwrap();
+    create_and_set_tpm2_session(context, tss_constants::TPM2_SE_HMAC).unwrap();
 
     let signing_key_pub = tss_esapi::utils::create_unrestricted_signing_rsa_public(
-        tss_esapi::utils::AsymSchemeUnion::RSASSA(
-            tss_esapi::utils::algorithm_specifiers::HashingAlgorithm::Sha256,
-        ),
+        tss_esapi::utils::AsymSchemeUnion::RSASSA(HashingAlgorithm::Sha256),
         2048,
         0,
     )
     .unwrap();
 
     let key_handle = context
-        .create_primary_key(ESYS_TR_RH_OWNER, &signing_key_pub, &[], &[], &[], &[])
+        .create_primary_key(ESYS_TR_RH_OWNER, &signing_key_pub, None, None, None, &[])
         .unwrap();
     let ahash = context
         .hash(
-            &[0x1, 0x2],
-            tss_esapi::utils::algorithm_specifiers::HashingAlgorithm::Sha256,
+            &MaxBuffer::try_from(vec![0x1, 0x2]).unwrap(),
+            HashingAlgorithm::Sha256,
             tss_esapi::utils::Hierarchy::Null,
         )
         .unwrap()
         .0;
 
     let scheme = tss_esapi::tss2_esys::TPMT_SIG_SCHEME {
-        scheme: tss_esapi::constants::TPM2_ALG_NULL,
+        scheme: tss_constants::TPM2_ALG_NULL,
         details: Default::default(),
     };
     let validation = tss_esapi::tss2_esys::TPMT_TK_HASHCHECK {
-        tag: tss_esapi::constants::TPM2_ST_HASHCHECK,
-        hierarchy: tss_esapi::constants::TPM2_RH_NULL,
+        tag: tss_constants::TPM2_ST_HASHCHECK,
+        hierarchy: tss_constants::TPM2_RH_NULL,
         digest: Default::default(),
     };
     // A signature over just the policy_digest, since the policy_ref is empty
@@ -556,16 +544,14 @@ fn get_dummy_ticket(context: &mut tss_esapi::Context) -> tss_esapi::tss2_esys::T
     tkt
 }
 
-fn get_pcr_hash_alg_from_name(
-    name: Option<&String>,
-) -> tss_esapi::utils::algorithm_specifiers::HashingAlgorithm {
+fn get_pcr_hash_alg_from_name(name: Option<&String>) -> HashingAlgorithm {
     match name {
-        None => tss_esapi::utils::algorithm_specifiers::HashingAlgorithm::Sha256,
+        None => HashingAlgorithm::Sha256,
         Some(val) => match val.to_lowercase().as_str() {
-            "sha1" => tss_esapi::utils::algorithm_specifiers::HashingAlgorithm::Sha1,
-            "sha256" => tss_esapi::utils::algorithm_specifiers::HashingAlgorithm::Sha256,
-            "sha384" => tss_esapi::utils::algorithm_specifiers::HashingAlgorithm::Sha384,
-            "sha512" => tss_esapi::utils::algorithm_specifiers::HashingAlgorithm::Sha512,
+            "sha1" => HashingAlgorithm::Sha1,
+            "sha256" => HashingAlgorithm::Sha256,
+            "sha384" => HashingAlgorithm::Sha384,
+            "sha512" => HashingAlgorithm::Sha512,
             _ => panic!(format!("Unsupported hash algo: {:?}", name)),
         },
     }
@@ -576,13 +562,15 @@ impl TryFrom<&SignedPolicyStep> for TPMPolicyStep {
 
     fn try_from(spolicy: &SignedPolicyStep) -> Result<Self, Error> {
         match spolicy {
-            SignedPolicyStep::PCRs{pcr_ids, hash_algorithm, value: _} => {
-                Ok(TPMPolicyStep::PCRs(
-                    get_pcr_hash_alg_from_name(Some(&hash_algorithm)),
-                    pcr_ids.iter().map(|x| *x as u64).collect(),
-                    Box::new(TPMPolicyStep::NoStep),
-                ))
-            },
+            SignedPolicyStep::PCRs {
+                pcr_ids,
+                hash_algorithm,
+                value: _,
+            } => Ok(TPMPolicyStep::PCRs(
+                get_pcr_hash_alg_from_name(Some(&hash_algorithm)),
+                pcr_ids.iter().map(|x| *x as u64).collect(),
+                Box::new(TPMPolicyStep::NoStep),
+            )),
         }
     }
 }

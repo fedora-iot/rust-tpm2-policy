@@ -2,7 +2,7 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum Error {
-    TPM(tss_esapi::response_code::Error),
+    TPM(tss_esapi::Error),
     NoMatchingPolicy,
     InvalidValue,
     NotImplemented(String),
@@ -15,7 +15,7 @@ impl fmt::Display for Error {
             Error::TPM(err) => {
                 write!(f, "TPM error: ")?;
                 err.fmt(f)
-            },
+            }
             Error::NoMatchingPolicy => write!(f, "No matching policy found in policy list"),
             Error::InvalidValue => write!(f, "Invalid parameter value"),
             Error::NotImplemented(value) => write!(f, "Feature {} not implemented", value),
@@ -27,8 +27,8 @@ impl fmt::Display for Error {
     }
 }
 
-impl From<tss_esapi::response_code::Error> for Error {
-    fn from(err: tss_esapi::response_code::Error) -> Self {
+impl From<tss_esapi::Error> for Error {
+    fn from(err: tss_esapi::Error) -> Self {
         Error::TPM(err)
     }
 }
