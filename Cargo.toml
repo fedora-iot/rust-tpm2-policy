@@ -4,6 +4,7 @@ description = "Specify and send TPM2 policies to satisfy object authorization"
 version = "0.2.0"
 authors = ["Patrick Uiterwijk <patrick@puiterwijk.org>"]
 edition = "2018"
+homepage = "https://github.com/fedora-iot/rust-tpm2-policy"
 license = "EUPL-1.2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
