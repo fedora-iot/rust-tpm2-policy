@@ -38,3 +38,5 @@ impl From<std::io::Error> for Error {
         Error::IO(err)
     }
 }
+
+pub type Result<T> = std::result::Result<T, Error>;

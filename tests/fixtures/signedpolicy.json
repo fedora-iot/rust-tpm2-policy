@@ -1,0 +1,22 @@
+[
+    {
+        "policy_ref": "",
+        "steps": [
+            {
+                "PCRs": {
+                    "pcr_ids": [
+                        21,
+                        22
+                    ],
+                    "hash_algorithm": "SHA256",
+                    "pcr_values": {
+                        "21": "//////////////////////////////////////////8=",
+                        "22": "//////////////////////////////////////////8="
+                    },
+                    "value": "hmfnGClOng3x0wYAuj7rIB92Sq0trXJ0hkPkooXh0fc="
+                }
+            }
+        ],
+        "signature": "P/8VmrKzxjXgWQtv5mXWyPo1DrAjTvaR43yoS0yW3IYJvdC2p/l/zOtuqSfzGaaNScA7NfgKQ810RIGWj9xzmXvz6qFCmvIG7RmoC1BE6n+pjKgwc99/O3XaEMinZe/HG8u7YYG7fxM0HxpMqnE85gjUSeXvF9tqjpD0CIoyxxXXWgFN4JoWREePXd9M7E8MeOWPhSlc6lbiyydrj8HyVFtobXErO/Kupdmr9NbjyslMpUNtV9dLixyMfYD45ETpa6HPMvgbC9G0Eh4k9jjX+xC3ZTKmVzjm+yClexQflw8xgXxjk4lMtT+BSNWIwzneIxzbQrAL1kFx2Nop8lrpSQ=="
+    }
+]

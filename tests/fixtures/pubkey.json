@@ -1,0 +1,8 @@
+{
+    "RSA": {
+        "scheme": "RSASSA",
+        "hashing_algo": "SHA256",
+        "exponent": 65537,
+        "modulus": "xKiLuMAZHDqepvOrJoIel9hjA8kUn8O2b6IOURtLNt9FH389bPYXdz/Jsq3d7G5fyJe/4u8e7blYv0zUEPA0lWWP9Bvp6zfwK3pUNDxYfzIt/yctNfV/5aljYFlw5pAkgyTvnwc2yUVzUgU6Eyxm/mcrTyyIiih4yYm4vkdu+RPLLhijb0EMwa3nH8V4gL0/xaCqY9N7+pLqnN609qadCk9g3XzjK9fGlifT+LW0lfZc0U/B3JvOJ7OF3yeTVgS8puS+IPTnroOD3DXghQOgUV+wlbngi9MNaXidEVn9EE0FRctME9Uma8NpGbQeZkpT2lvCZrb98ACJOPnR0R7SVw=="
+    }
+}
