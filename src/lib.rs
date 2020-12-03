@@ -92,21 +92,29 @@ impl TPMPolicyStep {
         ctx: &mut tss_esapi::Context,
         trial_policy: bool,
     ) -> Result<(Option<Session>, Option<Digest>)> {
-        let session = create_tpm2_session(
-            ctx,
-            if trial_policy {
-                SessionType::Trial
-            } else {
-                SessionType::Policy
-            },
-        )
-        .unwrap();
+        match self {
+            TPMPolicyStep::NoStep => {
+                let session = create_tpm2_session(ctx, SessionType::Hmac)?;
+                Ok((Some(session), None))
+            }
+            _ => {
+                let session = create_tpm2_session(
+                    ctx,
+                    if trial_policy {
+                        SessionType::Trial
+                    } else {
+                        SessionType::Policy
+                    },
+                )
+                .unwrap();
 
-        self._send_policy(ctx, session)?;
+                self._send_policy(ctx, session)?;
 
-        let pol_digest = ctx.policy_get_digest(session)?;
+                let pol_digest = ctx.policy_get_digest(session)?;
 
-        Ok((Some(session), Some(pol_digest)))
+                Ok((Some(session), Some(pol_digest)))
+            }
+        }
     }
 
     fn _send_policy(self, ctx: &mut tss_esapi::Context, policy_session: Session) -> Result<()> {
