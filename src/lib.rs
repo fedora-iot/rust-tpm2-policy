@@ -165,18 +165,15 @@ impl TPMPolicyStep {
 
                 let (approved_policy, check_ticket) = match policies {
                     None => {
-                        /* Some TPMs don't seem to like the Null ticket.. Let's just use a dummy
                         let null_ticket = tss_esapi::tss2_esys::TPMT_TK_VERIFIED {
-                            tag: tss_esapi::constants::TPM2_ST_VERIFIED,
+                            tag: tss_esapi::constants::tss::TPM2_ST_VERIFIED,
                             hierarchy: tss_esapi::tss2_esys::ESYS_TR_RH_NULL,
                             digest: tss_esapi::tss2_esys::TPM2B_DIGEST {
                                 size: 32,
                                 buffer: [0; 64],
                             },
                         };
-                        */
-                        let dummy_ticket = get_dummy_ticket(ctx);
-                        (Digest::try_from(vec![])?, dummy_ticket)
+                        (Digest::try_from(vec![])?, null_ticket.try_into()?)
                     }
                     Some(policies) => find_and_play_applicable_policy(
                         ctx,
@@ -263,56 +260,4 @@ fn play_policy(
     }
 
     Ok(Some(ctx.policy_get_digest(policy_session)?))
-}
-
-// It turns out that a Null ticket does not work for some TPMs, so let's just generate
-// a dummy ticket. This is a valid ticket, but over a totally useless piece of data.
-fn get_dummy_ticket(context: &mut tss_esapi::Context) -> VerifiedTicket {
-    let signing_key_pub = tss_esapi::utils::create_unrestricted_signing_rsa_public(
-        tss_esapi::utils::AsymSchemeUnion::RSASSA(HashingAlgorithm::Sha256),
-        2048,
-        0,
-    )
-    .unwrap();
-
-    let sign_key = context
-        .create_primary_key(
-            Hierarchy::Owner,
-            &signing_key_pub,
-            None,
-            None,
-            None,
-            PcrSelectionListBuilder::new().build(),
-        )
-        .unwrap();
-    let ahash = context
-        .hash(
-            &MaxBuffer::try_from(vec![0x1, 0x2]).unwrap(),
-            HashingAlgorithm::Sha256,
-            Hierarchy::Null,
-        )
-        .unwrap()
-        .0;
-
-    let scheme = tss_esapi::tss2_esys::TPMT_SIG_SCHEME {
-        scheme: tss_constants::TPM2_ALG_NULL,
-        details: Default::default(),
-    };
-    let validation = tss_esapi::tss2_esys::TPMT_TK_HASHCHECK {
-        tag: tss_constants::TPM2_ST_HASHCHECK,
-        hierarchy: tss_constants::TPM2_RH_NULL,
-        digest: Default::default(),
-    };
-    // A signature over just the policy_digest, since the policy_ref is empty
-    let signature = context
-        .sign(
-            sign_key.key_handle,
-            &ahash,
-            scheme,
-            validation.try_into().unwrap(),
-        )
-        .unwrap();
-    context
-        .verify_signature(sign_key.key_handle, &ahash, signature)
-        .unwrap()
 }
