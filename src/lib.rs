@@ -16,16 +16,14 @@ use std::convert::{TryFrom, TryInto};
 use std::io::Write;
 
 use tss_esapi::{
-    constants::{
-        algorithm::{Cipher, HashingAlgorithm},
-        tss as tss_constants,
-        types::session::SessionType,
-    },
+    attributes::SessionAttributesBuilder,
+    constants::SessionType,
     handles::KeyHandle,
-    interface_types::resource_handles::Hierarchy,
-    session::Session,
+    interface_types::algorithm::HashingAlgorithm,
+    interface_types::{resource_handles::Hierarchy, session_handles::AuthSession},
+    structures::SymmetricDefinition,
     structures::{Digest, MaxBuffer, Nonce, PcrSelectionListBuilder, PcrSlot, VerifiedTicket},
-    utils::{AsymSchemeUnion, TpmaSessionBuilder},
+    utils::AsymSchemeUnion,
 };
 
 mod error;
@@ -33,23 +31,26 @@ mod structures;
 pub use error::{Error, Result};
 pub use structures::{PublicKey, SignedPolicy, SignedPolicyList, SignedPolicyStep, TPMPolicyStep};
 
-fn create_tpm2_session(ctx: &mut tss_esapi::Context, session_type: SessionType) -> Result<Session> {
+fn create_tpm2_session(
+    ctx: &mut tss_esapi::Context,
+    session_type: SessionType,
+) -> Result<AuthSession> {
     let session = ctx
         .start_auth_session(
             None,
             None,
             None,
             session_type,
-            Cipher::aes_128_cfb(),
+            SymmetricDefinition::AES_128_CFB,
             HashingAlgorithm::Sha256,
         )?
         .unwrap();
-    let session_attr = TpmaSessionBuilder::new()
-        .with_flag(tss_constants::TPMA_SESSION_DECRYPT)
-        .with_flag(tss_constants::TPMA_SESSION_ENCRYPT)
+    let (session_attrs, session_attr_mask) = SessionAttributesBuilder::new()
+        .with_decrypt(true)
+        .with_encrypt(true)
         .build();
 
-    ctx.tr_sess_set_attributes(session, session_attr)?;
+    ctx.tr_sess_set_attributes(session, session_attrs, session_attr_mask)?;
 
     Ok(session)
 }
@@ -91,7 +92,7 @@ impl TPMPolicyStep {
         self,
         ctx: &mut tss_esapi::Context,
         trial_policy: bool,
-    ) -> Result<(Option<Session>, Option<Digest>)> {
+    ) -> Result<(Option<AuthSession>, Option<Digest>)> {
         match self {
             TPMPolicyStep::NoStep => {
                 let session = create_tpm2_session(ctx, SessionType::Hmac)?;
@@ -110,14 +111,14 @@ impl TPMPolicyStep {
 
                 self._send_policy(ctx, session)?;
 
-                let pol_digest = ctx.policy_get_digest(session)?;
+                let pol_digest = ctx.policy_get_digest(session.try_into()?)?;
 
                 Ok((Some(session), Some(pol_digest)))
             }
         }
     }
 
-    fn _send_policy(self, ctx: &mut tss_esapi::Context, policy_session: Session) -> Result<()> {
+    fn _send_policy(self, ctx: &mut tss_esapi::Context, policy_session: AuthSession) -> Result<()> {
         match self {
             TPMPolicyStep::NoStep => Ok(()),
 
@@ -155,7 +156,7 @@ impl TPMPolicyStep {
                     )
                 })?;
 
-                ctx.policy_pcr(policy_session, &hashed_data, pcr_sel)?;
+                ctx.policy_pcr(policy_session.try_into()?, &hashed_data, pcr_sel)?;
                 next._send_policy(ctx, policy_session)
             }
 
@@ -175,7 +176,7 @@ impl TPMPolicyStep {
                     None => {
                         let null_ticket = tss_esapi::tss2_esys::TPMT_TK_VERIFIED {
                             tag: tss_esapi::constants::tss::TPM2_ST_VERIFIED,
-                            hierarchy: tss_esapi::tss2_esys::ESYS_TR_RH_NULL,
+                            hierarchy: tss_esapi::constants::tss::TPM2_RH_NULL,
                             digest: tss_esapi::tss2_esys::TPM2B_DIGEST {
                                 size: 32,
                                 buffer: [0; 64],
@@ -194,7 +195,7 @@ impl TPMPolicyStep {
                 };
 
                 ctx.policy_authorize(
-                    policy_session,
+                    policy_session.try_into()?,
                     &approved_policy,
                     &policy_ref,
                     &loaded_key_name,
@@ -212,7 +213,7 @@ impl TPMPolicyStep {
 fn find_and_play_applicable_policy(
     ctx: &mut tss_esapi::Context,
     policies: &[SignedPolicy],
-    policy_session: Session,
+    policy_session: AuthSession,
     policy_ref: &[u8],
     scheme: AsymSchemeUnion,
     loaded_key: KeyHandle,
@@ -256,7 +257,7 @@ fn check_policy_feasibility(_ctx: &mut tss_esapi::Context, _policy: &SignedPolic
 fn play_policy(
     ctx: &mut tss_esapi::Context,
     policy: &SignedPolicy,
-    policy_session: Session,
+    policy_session: AuthSession,
 ) -> Result<Option<Digest>> {
     if !check_policy_feasibility(ctx, policy)? {
         return Ok(None);
@@ -267,5 +268,5 @@ fn play_policy(
         tpmstep._send_policy(ctx, policy_session)?;
     }
 
-    Ok(Some(ctx.policy_get_digest(policy_session)?))
+    Ok(Some(ctx.policy_get_digest(policy_session.try_into()?)?))
 }

@@ -18,7 +18,7 @@ use std::convert::TryFrom;
 
 use serde::{Deserialize, Serialize};
 use tss_esapi::{
-    constants::{algorithm::HashingAlgorithm, tss as tss_constants},
+    constants::tss as tss_constants, interface_types::algorithm::HashingAlgorithm,
     utils::AsymSchemeUnion,
 };
 
@@ -170,14 +170,15 @@ impl TryFrom<&PublicKey> for tss_esapi::tss2_esys::TPM2B_PUBLIC {
                 modulus,
                 exponent,
             } => {
-                let mut object_attributes = tss_esapi::utils::ObjectAttributes(0);
-                object_attributes.set_fixed_tpm(false);
-                object_attributes.set_fixed_parent(false);
-                object_attributes.set_sensitive_data_origin(false);
-                object_attributes.set_user_with_auth(true);
-                object_attributes.set_decrypt(false);
-                object_attributes.set_sign_encrypt(true);
-                object_attributes.set_restricted(false);
+                let object_attributes =
+                    tss_esapi::attributes::object::ObjectAttributesBuilder::new()
+                        .with_fixed_tpm(false)
+                        .with_fixed_parent(false)
+                        .with_sensitive_data_origin(false)
+                        .with_user_with_auth(true)
+                        .with_decrypt(false)
+                        .with_sign_encrypt(true)
+                        .with_restricted(false);
 
                 let len = modulus.len();
                 let mut buffer = [0_u8; 512];
@@ -198,7 +199,7 @@ impl TryFrom<&PublicKey> for tss_esapi::tss2_esys::TPM2B_PUBLIC {
                         )
                         .build()?,
                     ))
-                    .with_object_attributes(object_attributes)
+                    .with_object_attributes(object_attributes.build()?)
                     .with_unique(tss_esapi::utils::PublicIdUnion::Rsa(rsa_uniq))
                     .build()?)
             }

@@ -3,7 +3,7 @@ mod utils;
 use std::convert::TryFrom;
 use std::fs;
 
-use tss_esapi::constants::algorithm::HashingAlgorithm;
+use tss_esapi::interface_types::algorithm::HashingAlgorithm;
 
 use tpm2_policy::{PublicKey, SignedPolicyList, TPMPolicyStep};
 
