@@ -215,7 +215,7 @@ fn get_pcr_hash_alg_from_name(name: Option<&String>) -> HashingAlgorithm {
             "sha256" => HashingAlgorithm::Sha256,
             "sha384" => HashingAlgorithm::Sha384,
             "sha512" => HashingAlgorithm::Sha512,
-            _ => panic!(format!("Unsupported hash algo: {:?}", name)),
+            _ => panic!("Unsupported hash algo: {:?}", name),
         },
     }
 }
