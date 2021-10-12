@@ -134,18 +134,18 @@ impl TPMPolicyStep {
                 let (_update_counter, pcr_sel, pcr_data) =
                     ctx.execute_without_session(|context| context.pcr_read(&pcr_sel))?;
 
-                let concatenated_pcr_values: Vec<&[u8]> = pcr_ids
+                let concatenated_pcr_values: Result<Vec<&[u8]>> = pcr_ids
                     .iter()
                     .map(|x| {
-                        pcr_data
+                        Ok(pcr_data
                             .pcr_bank(pcr_hash_alg)
-                            .unwrap()
+                            .ok_or_else(|| Error::PcrValueNotReturned(pcr_hash_alg, None))?
                             .pcr_value(*x)
-                            .unwrap()
-                            .value()
+                            .ok_or_else(|| Error::PcrValueNotReturned(pcr_hash_alg, Some(*x)))?
+                            .value())
                     })
                     .collect();
-                let concatenated_pcr_values = concatenated_pcr_values.as_slice().concat();
+                let concatenated_pcr_values = concatenated_pcr_values?.as_slice().concat();
                 let concatenated_pcr_values = MaxBuffer::try_from(concatenated_pcr_values)?;
 
                 let (hashed_data, _ticket) = ctx.execute_without_session(|context| {

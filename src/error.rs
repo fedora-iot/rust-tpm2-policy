@@ -1,12 +1,17 @@
 use std::fmt;
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     TPM(tss_esapi::Error),
     NoMatchingPolicy,
     InvalidValue,
     NotImplemented(String),
     IO(std::io::Error),
+    PcrValueNotReturned(
+        tss_esapi::interface_types::algorithm::HashingAlgorithm,
+        Option<tss_esapi::structures::PcrSlot>,
+    ),
 }
 
 impl fmt::Display for Error {
@@ -23,6 +28,11 @@ impl fmt::Display for Error {
                 write!(f, "IO error: ")?;
                 err.fmt(f)
             }
+            Error::PcrValueNotReturned(bank, slot) => write!(
+                f,
+                "PCR value not returned by TPM, bank: {:?}, slot: {:?}",
+                bank, slot
+            ),
         }
     }
 }
