@@ -28,7 +28,7 @@ pub fn get_tpm2_ctx() -> Context {
     };
 
     let tcti = Tcti::from_str(&tcti_path).unwrap();
-    unsafe { Context::new(tcti) }.unwrap()
+    Context::new(tcti).unwrap()
 }
 
 fn get_signtool_location() -> PathBuf {

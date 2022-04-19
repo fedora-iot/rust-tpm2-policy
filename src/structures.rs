@@ -14,13 +14,10 @@
 
 use crate::error::{Error, Result};
 
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 
 use serde::{Deserialize, Serialize};
-use tss_esapi::{
-    constants::tss as tss_constants, interface_types::algorithm::HashingAlgorithm,
-    utils::AsymSchemeUnion,
-};
+use tss_esapi::{interface_types::algorithm::HashingAlgorithm, structures::SignatureScheme};
 
 fn serialize_as_base64<S>(bytes: &[u8], serializer: S) -> std::result::Result<S::Ok, S::Error>
 where
@@ -37,7 +34,7 @@ where
         .and_then(|string| base64::decode(&string).map_err(serde::de::Error::custom))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum SignedPolicyStep {
     PCRs {
         pcr_ids: Vec<u16>,
@@ -50,7 +47,7 @@ pub enum SignedPolicyStep {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SignedPolicy {
     // policy_ref contains the policy_ref used in the aHash, used to determine the policy to use from a list
     #[serde(
@@ -70,7 +67,7 @@ pub struct SignedPolicy {
 
 pub type SignedPolicyList = Vec<SignedPolicy>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TPMPolicyStep {
     NoStep,
     PCRs(HashingAlgorithm, Vec<u64>, Box<TPMPolicyStep>),
@@ -83,22 +80,37 @@ pub enum TPMPolicyStep {
     Or([Box<TPMPolicyStep>; 8]),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum RSAPublicKeyScheme {
     RSAPSS,
     RSASSA,
 }
 
 impl RSAPublicKeyScheme {
-    fn to_scheme(&self, hash_algo: &HashAlgo) -> AsymSchemeUnion {
+    fn to_scheme(&self, hash_algo: HashAlgo) -> SignatureScheme {
         match self {
-            RSAPublicKeyScheme::RSAPSS => AsymSchemeUnion::RSAPSS(hash_algo.into()),
-            RSAPublicKeyScheme::RSASSA => AsymSchemeUnion::RSASSA(hash_algo.into()),
+            RSAPublicKeyScheme::RSAPSS => SignatureScheme::RsaPss {
+                hash_scheme: hash_algo.into(),
+            },
+            RSAPublicKeyScheme::RSASSA => SignatureScheme::RsaSsa {
+                hash_scheme: hash_algo.into(),
+            },
+        }
+    }
+
+    fn to_rsa_scheme(&self, hash_algo: HashAlgo) -> Result<tss_esapi::structures::RsaScheme> {
+        match self {
+            RSAPublicKeyScheme::RSAPSS => {
+                Ok(tss_esapi::structures::RsaScheme::RsaPss(hash_algo.into()))
+            }
+            RSAPublicKeyScheme::RSASSA => {
+                Ok(tss_esapi::structures::RsaScheme::RsaSsa(hash_algo.into()))
+            }
         }
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum HashAlgo {
     SHA1,
     SHA256,
@@ -110,15 +122,8 @@ pub enum HashAlgo {
     SHA3_512,
 }
 
-impl HashAlgo {
-    fn to_tpmi_alg_hash(&self) -> tss_esapi::tss2_esys::TPMI_ALG_HASH {
-        let alg: HashingAlgorithm = self.into();
-        alg.into()
-    }
-}
-
-impl From<&HashAlgo> for HashingAlgorithm {
-    fn from(halg: &HashAlgo) -> Self {
+impl From<HashAlgo> for HashingAlgorithm {
+    fn from(halg: HashAlgo) -> Self {
         match halg {
             HashAlgo::SHA1 => HashingAlgorithm::Sha1,
             HashAlgo::SHA256 => HashingAlgorithm::Sha256,
@@ -132,7 +137,13 @@ impl From<&HashAlgo> for HashingAlgorithm {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl From<HashAlgo> for tss_esapi::structures::HashScheme {
+    fn from(halg: HashAlgo) -> Self {
+        tss_esapi::structures::HashScheme::new(halg.into())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum PublicKey {
     RSA {
         scheme: RSAPublicKeyScheme,
@@ -147,22 +158,22 @@ pub enum PublicKey {
 }
 
 impl PublicKey {
-    pub(crate) fn get_signing_scheme(&self) -> tss_esapi::utils::AsymSchemeUnion {
+    pub(crate) fn get_signing_scheme(&self) -> SignatureScheme {
         match self {
             PublicKey::RSA {
                 scheme,
                 hashing_algo,
                 exponent: _,
                 modulus: _,
-            } => scheme.to_scheme(hashing_algo),
+            } => scheme.to_scheme(*hashing_algo),
         }
     }
 }
 
-impl TryFrom<&PublicKey> for tss_esapi::tss2_esys::TPM2B_PUBLIC {
+impl TryFrom<PublicKey> for tss_esapi::structures::Public {
     type Error = Error;
 
-    fn try_from(publickey: &PublicKey) -> Result<Self> {
+    fn try_from(publickey: PublicKey) -> Result<Self> {
         match publickey {
             PublicKey::RSA {
                 scheme,
@@ -180,27 +191,18 @@ impl TryFrom<&PublicKey> for tss_esapi::tss2_esys::TPM2B_PUBLIC {
                         .with_sign_encrypt(true)
                         .with_restricted(false);
 
-                let len = modulus.len();
-                let mut buffer = [0_u8; 512];
-                buffer[..len].clone_from_slice(&modulus[..len]);
-                let rsa_uniq = Box::new(tss_esapi::tss2_esys::TPM2B_PUBLIC_KEY_RSA {
-                    size: len as u16,
-                    buffer,
-                });
-
-                Ok(tss_esapi::utils::Tpm2BPublicBuilder::new()
-                    .with_type(tss_constants::TPM2_ALG_RSA)
-                    .with_name_alg(hashing_algo.to_tpmi_alg_hash())
-                    .with_parms(tss_esapi::utils::PublicParmsUnion::RsaDetail(
-                        tss_esapi::utils::TpmsRsaParmsBuilder::new_unrestricted_signing_key(
-                            scheme.to_scheme(&hashing_algo),
-                            (modulus.len() * 8) as u16,
-                            *exponent,
+                Ok(tss_esapi::structures::PublicBuilder::new()
+                    .with_public_algorithm(tss_esapi::interface_types::algorithm::PublicAlgorithm::Rsa)
+                    .with_name_hashing_algorithm(hashing_algo.into())
+                    .with_rsa_parameters(tss_esapi::structures::PublicRsaParametersBuilder::new_unrestricted_signing_key(
+                            scheme.to_rsa_scheme(hashing_algo)?,
+                            ((modulus.len() * 8) as u16).try_into()?,
+                            tss_esapi::structures::RsaExponent::create(exponent)?,
                         )
-                        .build()?,
-                    ))
+                        .build()?
+                    )
                     .with_object_attributes(object_attributes.build()?)
-                    .with_unique(tss_esapi::utils::PublicIdUnion::Rsa(rsa_uniq))
+                    .with_rsa_unique_identifier(modulus.clone().try_into()?)
                     .build()?)
             }
         }

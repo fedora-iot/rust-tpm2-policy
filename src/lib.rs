@@ -21,9 +21,10 @@ use tss_esapi::{
     handles::KeyHandle,
     interface_types::algorithm::HashingAlgorithm,
     interface_types::{resource_handles::Hierarchy, session_handles::AuthSession},
-    structures::SymmetricDefinition,
-    structures::{Digest, MaxBuffer, Nonce, PcrSelectionListBuilder, PcrSlot, VerifiedTicket},
-    utils::AsymSchemeUnion,
+    structures::{
+        Digest, MaxBuffer, Nonce, PcrSelectionListBuilder, PcrSlot, SignatureScheme, VerifiedTicket,
+    },
+    structures::{Signature, SymmetricDefinition},
 };
 
 mod error;
@@ -129,34 +130,28 @@ impl TPMPolicyStep {
 
                 let pcr_sel = PcrSelectionListBuilder::new()
                     .with_selection(pcr_hash_alg, &pcr_ids)
-                    .build();
+                    .build()?;
 
                 let (_update_counter, pcr_sel, pcr_data) =
-                    ctx.execute_without_session(|context| context.pcr_read(&pcr_sel))?;
+                    ctx.execute_without_session(|context| context.pcr_read(pcr_sel))?;
 
-                let concatenated_pcr_values: Result<Vec<&[u8]>> = pcr_ids
+                let concatenated_pcr_values = pcr_data
+                    .value()
                     .iter()
-                    .map(|x| {
-                        Ok(pcr_data
-                            .pcr_bank(pcr_hash_alg)
-                            .ok_or_else(|| Error::PcrValueNotReturned(pcr_hash_alg, None))?
-                            .pcr_value(*x)
-                            .ok_or_else(|| Error::PcrValueNotReturned(pcr_hash_alg, Some(*x)))?
-                            .value())
-                    })
-                    .collect();
-                let concatenated_pcr_values = concatenated_pcr_values?.as_slice().concat();
+                    .map(|x| x.value())
+                    .collect::<Vec<&[u8]>>()
+                    .concat();
                 let concatenated_pcr_values = MaxBuffer::try_from(concatenated_pcr_values)?;
 
                 let (hashed_data, _ticket) = ctx.execute_without_session(|context| {
                     context.hash(
-                        &concatenated_pcr_values,
+                        concatenated_pcr_values,
                         HashingAlgorithm::Sha256,
                         Hierarchy::Owner,
                     )
                 })?;
 
-                ctx.policy_pcr(policy_session.try_into()?, &hashed_data, pcr_sel)?;
+                ctx.policy_pcr(policy_session.try_into()?, hashed_data, pcr_sel)?;
                 next._send_policy(ctx, policy_session)
             }
 
@@ -168,8 +163,8 @@ impl TPMPolicyStep {
             } => {
                 let policy_ref = Nonce::try_from(policy_ref)?;
 
-                let tpm_signkey = tss_esapi::tss2_esys::TPM2B_PUBLIC::try_from(&signkey)?;
-                let loaded_key = ctx.load_external_public(&tpm_signkey, Hierarchy::Owner)?;
+                let loaded_key =
+                    ctx.load_external_public(signkey.clone().try_into()?, Hierarchy::Owner)?;
                 let loaded_key_name = ctx.tr_get_name(loaded_key.into())?;
 
                 let (approved_policy, check_ticket) = match policies {
@@ -196,8 +191,8 @@ impl TPMPolicyStep {
 
                 ctx.policy_authorize(
                     policy_session.try_into()?,
-                    &approved_policy,
-                    &policy_ref,
+                    approved_policy,
+                    policy_ref,
                     &loaded_key_name,
                     check_ticket,
                 )?;
@@ -215,7 +210,7 @@ fn find_and_play_applicable_policy(
     policies: &[SignedPolicy],
     policy_session: AuthSession,
     policy_ref: &[u8],
-    scheme: AsymSchemeUnion,
+    scheme: SignatureScheme,
     loaded_key: KeyHandle,
 ) -> Result<(Digest, VerifiedTicket)> {
     for policy in policies {
@@ -232,13 +227,24 @@ fn find_and_play_applicable_policy(
             let ahash = MaxBuffer::try_from(ahash)?;
 
             let ahash = ctx
-                .hash(&ahash, HashingAlgorithm::Sha256, Hierarchy::Null)?
+                .hash(ahash, HashingAlgorithm::Sha256, Hierarchy::Null)?
                 .0;
-            let signature = tss_esapi::utils::Signature {
-                scheme,
-                signature: tss_esapi::utils::SignatureData::RsaSignature(policy.signature.clone()),
+            let signature = match scheme {
+                SignatureScheme::RsaPss { hash_scheme } => {
+                    Signature::RsaPss(tss_esapi::structures::RsaSignature::create(
+                        hash_scheme.hashing_algorithm(),
+                        policy.signature.clone().try_into()?,
+                    )?)
+                }
+                SignatureScheme::RsaSsa { hash_scheme } => {
+                    Signature::RsaSsa(tss_esapi::structures::RsaSignature::create(
+                        hash_scheme.hashing_algorithm(),
+                        policy.signature.clone().try_into()?,
+                    )?)
+                }
+                _ => todo!(),
             };
-            let tkt = ctx.verify_signature(loaded_key, &ahash, signature)?;
+            let tkt = ctx.verify_signature(loaded_key, ahash, signature)?;
 
             return Ok((policy_digest, tkt));
         }
