@@ -16,6 +16,7 @@ use crate::error::{Error, Result};
 
 use std::convert::{TryFrom, TryInto};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use tss_esapi::{interface_types::algorithm::HashingAlgorithm, structures::SignatureScheme};
 
@@ -23,7 +24,7 @@ fn serialize_as_base64<S>(bytes: &[u8], serializer: S) -> std::result::Result<S:
 where
     S: serde::Serializer,
 {
-    serializer.serialize_str(&base64::encode(bytes))
+    serializer.serialize_str(&STANDARD.encode(bytes))
 }
 
 fn deserialize_as_base64<'de, D>(deserializer: D) -> std::result::Result<Vec<u8>, D::Error>
@@ -31,7 +32,7 @@ where
     D: serde::Deserializer<'de>,
 {
     String::deserialize(deserializer)
-        .and_then(|string| base64::decode(&string).map_err(serde::de::Error::custom))
+        .and_then(|string| STANDARD.decode(&string).map_err(serde::de::Error::custom))
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
