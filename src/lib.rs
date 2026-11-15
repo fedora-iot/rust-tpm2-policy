@@ -46,10 +46,7 @@ fn create_tpm2_session(
             HashingAlgorithm::Sha256,
         )?
         .unwrap();
-    let (session_attrs, session_attr_mask) = SessionAttributesBuilder::new()
-        .with_decrypt(true)
-        .with_encrypt(true)
-        .build();
+    let (session_attrs, session_attr_mask) = SessionAttributesBuilder::new().build();
 
     ctx.tr_sess_set_attributes(session, session_attrs, session_attr_mask)?;
 
